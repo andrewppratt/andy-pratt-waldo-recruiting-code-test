@@ -6,6 +6,8 @@ import piexif
 import exifread
 from pymongo import MongoClient
 import pymongo.errors
+import Queue
+import threading
 
 req = urllib2.Request('https://s3.amazonaws.com/waldo-recruiting')
 try: response = urllib2.urlopen(req)
@@ -20,9 +22,12 @@ else:
 # create element tree structure list of photos
 root = ET.fromstring(f)
 ns = '{http://s3.amazonaws.com/doc/2006-03-01/}'
-photos = []
+q = Queue.Queue()
 for contents in root.findall(ns + 'Contents'):
-	photos.append(contents.find(ns + 'Key').text)
+	file_name = contents.find(ns + 'Key').text
+	print file_name[-3:]
+	if file_name[-3:] in ('jpg', 'JPG', 'tif', 'TIF', 'wav', 'WAV'):
+		q.put(file_name)
 
 #create mongo connection
 client = MongoClient()
@@ -30,38 +35,46 @@ db = client.test
 db.photos.ensure_index("photo_name", unique=True)
 
 # Get photos and parse EXIF info
-# Performance issues here. Downloading entire photo file for small amount of text is not fast.
-# Ideas: 
-# 1. Thread the download and create a separate thread to parse exif info and another to update the db
-# 2. Download only the first chunk of photo * assumes exif info is at the beginning of the file and has a finite size 
-
-for photo in photos:
-	req = urllib2.Request('https://s3.amazonaws.com/waldo-recruiting' + '/' + photo)
-	try: response = urllib2.urlopen(req)
-	except urllib2.HTTPError as e:
-        	print e.reason
-	except urllib2.URLError as e:
-        	print e.reason
-	else:
-		# Add check for file type photo (jpeg, tiff and whatever else has exif info
-		fh = open('photos/'+photo, 'w')
-		fh.write(response.read())
-		fh.close()
-		f = open('photos/'+photo)
-		tags = exifread.process_file(f)
-		picDict = {}
-		picDict["photo_name"] = photo
-		print photo
-		for tag in tags.keys():
-    			if tag not in ('JPEGThumbnail', 'TIFFThumbnail', 'Filename', 'EXIF MakerNote'):
-				try:
-					picDict[unicode(tag).encode('utf-8')] = tags[tag].printable.encode('utf-8')
-				except Exception as e: # Better error handling is in order here
+def worker(queue):
+	queue_full = True
+	while queue_full:
+		try:
+			file_name = queue.get(False)
+			req = urllib2.Request('https://s3.amazonaws.com/waldo-recruiting' + '/' + file_name)
+			try: response = urllib2.urlopen(req)
+			except urllib2.HTTPError as e:
+				print e.reason
+			except urllib2.URLError as e:
+				print e.reason
+			else:
+				# I couldn't figure out how to open a url with binary transfer - there's got to be a way
+				# So I saved locally and reopened - which seems wastefull.
+				fh = open('photos/'+file_name, 'w')
+				fh.write(response.read())
+				fh.close()
+				f = open('photos/'+file_name)
+				tags = exifread.process_file(f)
+				picDict = {}
+				picDict["photo_name"] = file_name 
+				print file_name 
+				for tag in tags.keys():
+					if tag not in ('JPEGThumbnail', 'TIFFThumbnail', 'Filename', 'EXIF MakerNote'):
+						try:
+							picDict[unicode(tag).encode('utf-8')] = tags[tag].printable.encode('utf-8')
+						except Exception as e: # Better error handling is in order here
+							pass
+				# Insert photo info into mongodb
+				try: result = db.photos.insert_one(picDict)
+				except pymongo.errors.DuplicateKeyError as e:
+					print e.message + 'No Insert'
 					pass
-	# Insert photo info into mongodb
-		try: result = db.photos.insert_one(picDict)
-		except pymongo.errors.DuplicateKeyError as e:
-			print e.message + 'No Insert'
-			pass
-		else:
-			print result
+				else:
+					print result
+		except Queue.Empty:
+			queue_full = False
+
+
+thread_count = 5
+for i in range(thread_count):
+    t = threading.Thread(target=worker, args = (q,))
+    t.start()
