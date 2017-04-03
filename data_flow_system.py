@@ -9,6 +9,7 @@ import pymongo.errors
 import Queue
 import threading
 
+# Get XML list of photos
 req = urllib2.Request('https://s3.amazonaws.com/waldo-recruiting')
 try: response = urllib2.urlopen(req)
 except urllib2.HTTPError as e:
@@ -25,14 +26,13 @@ ns = '{http://s3.amazonaws.com/doc/2006-03-01/}'
 q = Queue.Queue()
 for contents in root.findall(ns + 'Contents'):
 	file_name = contents.find(ns + 'Key').text
-	print file_name[-3:]
 	if file_name[-3:] in ('jpg', 'JPG', 'tif', 'TIF', 'wav', 'WAV'):
 		q.put(file_name)
 
 #create mongo connection
 client = MongoClient()
 db = client.test
-db.photos.ensure_index("photo_name", unique=True)
+db.photos.ensure_index('photo_name', unique=True)
 
 # Get photos and parse EXIF info
 def worker(queue):
@@ -43,9 +43,9 @@ def worker(queue):
 			req = urllib2.Request('https://s3.amazonaws.com/waldo-recruiting' + '/' + file_name)
 			try: response = urllib2.urlopen(req)
 			except urllib2.HTTPError as e:
-				print e.reason
+				print 'File download error: ' + e.reason + '\n'
 			except urllib2.URLError as e:
-				print e.reason
+				print 'File download error: ' + e.reason + '\n'
 			else:
 				# I couldn't figure out how to open a url with binary transfer - there's got to be a way
 				# So I saved locally and reopened - which seems wastefull.
@@ -55,8 +55,8 @@ def worker(queue):
 				f = open('photos/'+file_name)
 				tags = exifread.process_file(f)
 				picDict = {}
-				picDict["photo_name"] = file_name 
-				print file_name 
+				picDict['photo_name'] = file_name 
+				print 'Processing Image: ' + file_name 
 				for tag in tags.keys():
 					if tag not in ('JPEGThumbnail', 'TIFFThumbnail', 'Filename', 'EXIF MakerNote'):
 						try:
@@ -69,7 +69,9 @@ def worker(queue):
 					print e.message + 'No Insert'
 					pass
 				else:
+					print 'Inserting into DB:'
 					print result
+					print '\n'
 		except Queue.Empty:
 			queue_full = False
 
