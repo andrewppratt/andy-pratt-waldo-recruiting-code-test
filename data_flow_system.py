@@ -2,7 +2,6 @@
 import urllib
 import urllib2
 import xml.etree.ElementTree as ET
-import piexif
 import exifread
 from pymongo import MongoClient
 import pymongo.errors
@@ -28,6 +27,7 @@ for contents in root.findall(ns + 'Contents'):
 	file_name = contents.find(ns + 'Key').text
 	if file_name[-3:] in ('jpg', 'JPG', 'tif', 'TIF', 'wav', 'WAV'):
 		q.put(file_name)
+	# Inform user a file was not used because it does not have exif info?
 
 #create mongo connection
 client = MongoClient()
@@ -43,9 +43,9 @@ def worker(queue):
 			req = urllib2.Request('https://s3.amazonaws.com/waldo-recruiting' + '/' + file_name)
 			try: response = urllib2.urlopen(req)
 			except urllib2.HTTPError as e:
-				print 'File download error: ' + e.reason + '\n'
+				print 'File "' + file_name + '":\n download error: ' + e.reason + '\n'
 			except urllib2.URLError as e:
-				print 'File download error: ' + e.reason + '\n'
+				print 'File "' + file_name + '":\n download error: ' + e.reason + '\n'
 			else:
 				# I couldn't figure out how to open a url with binary transfer - there's got to be a way
 				# So I saved locally and reopened - which seems wastefull.
@@ -62,6 +62,7 @@ def worker(queue):
 						try:
 							picDict[unicode(tag).encode('utf-8')] = tags[tag].printable.encode('utf-8')
 						except Exception as e: # Better error handling is in order here
+							print 'Encoding error. Tag "' + tag + '" for file "' + file_name + '" not inserted into DB.\n'
 							pass
 				# Insert photo info into mongodb
 				try: result = db.photos.insert_one(picDict)
