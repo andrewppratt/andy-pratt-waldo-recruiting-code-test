@@ -7,7 +7,7 @@ This script requires a local instantance of a Mongo DB called 'test'.
 It was developed on OS X Mac terminal using Python 2.7.10
 The following libraries are required for this script to work:
 pymongo==3.4.0
-Read==2.1.2 
+ExifRead==2.1.2 
 
 To run type 'python data_flow_system.py'
 
